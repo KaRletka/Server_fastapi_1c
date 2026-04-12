@@ -10,9 +10,9 @@ _ctx_user:     ContextVar[str] = ContextVar("onec_user",     default="")
 _ctx_password: ContextVar[str] = ContextVar("onec_password", default="")
 
 
-def set_credentials(server_ip: str, user: str, password: str, onec_publication: str) -> None:
+def set_credentials(onec_base_url: str, user: str, password: str) -> None:
     """Устанавливает учётные данные для текущего запроса."""
-    _ctx_base_url.set(f"http://{server_ip}/{onec_publication}/odata/standard.odata")
+    _ctx_base_url.set(f"{onec_base_url}/odata/standard.odata")
     _ctx_user.set(user)
     _ctx_password.set(password)
 

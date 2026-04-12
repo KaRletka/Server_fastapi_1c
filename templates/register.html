@@ -175,25 +175,14 @@
 
         <form method="post" action="/register">
             <div class="form-group">
-                <label class="form-label">IP-адрес сервера 1С</label>
+                <label class="form-label">Адрес сервера 1С</label>
                 <div class="input-wrapper">
                     <i class="bi bi-hdd-network input-icon"></i>
-                    <input class="form-input" type="text" name="server_ip"
-                           placeholder="192.168.1.100 или localhost"
-                           value="/*@@SERVER_IP@@*/" required autofocus>
+                    <input class="form-input" type="text" name="onec_base_url"
+                           placeholder="http://192.168.1.100/unf_dashboard"
+                           value="/*@@ONEC_BASE_URL@@*/" required autofocus>
                 </div>
-                <div class="field-hint">Без http:// и завершающего слеша</div>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">Имя публикации 1С</label>
-                <div class="input-wrapper">
-                    <i class="bi bi-link-45deg input-icon"></i>
-                    <input class="form-input" type="text" name="onec_publication"
-                           placeholder="unf_dashboard"
-                           value="/*@@ONEC_PUBLICATION@@*/" required>
-                </div>
-                <div class="field-hint">Имя публикации из настроек веб-сервера (например, unf_dashboard)</div>
+                <div class="field-hint">Полный адрес публикации 1С (http://ip/имя_публикации)</div>
             </div>
 
             <hr class="divider">

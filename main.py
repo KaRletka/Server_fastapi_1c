@@ -81,7 +81,7 @@ def require_session(request: Request):
     session = get_session(request)
     if not session:
         return None, RedirectResponse(url="/login", status_code=302)
-    set_credentials(session["server_ip"], session["user"], session["password"], session["onec_publication"])
+    set_credentials(session["onec_base_url"], session["user"], session["password"])
     return session, None
 
 
@@ -98,16 +98,15 @@ def _render_login(error: str = "", username: str = "") -> str:
     return html
 
 
-def _render_register(error: str = "", username: str = "", server_ip: str = "", onec_publication: str = "") -> str:
+def _render_register(error: str = "", username: str = "", onec_base_url: str = "") -> str:
     html = REGISTER_TEMPLATE_PATH.read_text(encoding="utf-8")
     error_block = (
         f'<div class="error-msg"><i class="bi bi-exclamation-circle"></i>{error}</div>'
         if error else ""
     )
-    html = html.replace("/*@@ERROR_BLOCK@@*/",      error_block)
-    html = html.replace("/*@@USERNAME@@*/",          username)
-    html = html.replace("/*@@SERVER_IP@@*/",         server_ip)
-    html = html.replace("/*@@ONEC_PUBLICATION@@*/",  onec_publication)
+    html = html.replace("/*@@ERROR_BLOCK@@*/",   error_block)
+    html = html.replace("/*@@USERNAME@@*/",       username)
+    html = html.replace("/*@@ONEC_BASE_URL@@*/",  onec_base_url)
     return html
 
 
@@ -149,9 +148,8 @@ async def login_submit(
         )
 
     # Проверяем подключение к 1С
-    server_ip        = user["server_ip"]
-    onec_publication = user["onec_publication"]
-    set_credentials(server_ip, username, password, onec_publication)
+    onec_base_url = user["onec_base_url"]
+    set_credentials(onec_base_url, username, password)
     try:
         fetch_employees()
     except Exception as e:
@@ -163,7 +161,7 @@ async def login_submit(
             status_code=502,
         )
 
-    session_data = {"server_ip": server_ip, "onec_publication": onec_publication, "user": username, "password": password}
+    session_data = {"onec_base_url": onec_base_url, "user": username, "password": password}
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
         key="session",
@@ -186,23 +184,22 @@ def register_page(request: Request):
 
 @app.post("/register")
 async def register_submit(
-    request:          Request,
-    server_ip:        str = Form(...),
-    onec_publication: str = Form(...),
-    username:         str = Form(...),
-    password:         str = Form(default=""),
+    request:       Request,
+    onec_base_url: str = Form(...),
+    username:      str = Form(...),
+    password:      str = Form(default=""),
 ):
-    server_ip        = server_ip.strip().removeprefix("http://").removeprefix("https://").rstrip("/")
-    onec_publication = onec_publication.strip().strip("/")
-    username         = username.strip()
+    onec_base_url = onec_base_url.strip().rstrip("/")
+    if not onec_base_url.startswith("http://") and not onec_base_url.startswith("https://"):
+        onec_base_url = "http://" + onec_base_url
+    username = username.strip()
 
-    if not server_ip or not onec_publication or not username:
+    if not onec_base_url or not username:
         return HTMLResponse(
             content=_render_register(
                 error="Заполните все обязательные поля",
                 username=username,
-                server_ip=server_ip,
-                onec_publication=onec_publication,
+                onec_base_url=onec_base_url,
             ),
             status_code=400,
         )
@@ -212,14 +209,13 @@ async def register_submit(
             content=_render_register(
                 error="Пользователь с таким логином уже существует",
                 username=username,
-                server_ip=server_ip,
-                onec_publication=onec_publication,
+                onec_base_url=onec_base_url,
             ),
             status_code=400,
         )
 
     # Проверяем подключение к 1С перед сохранением
-    set_credentials(server_ip, username, password, onec_publication)
+    set_credentials(onec_base_url, username, password)
     try:
         fetch_employees()
     except Exception as e:
@@ -227,16 +223,15 @@ async def register_submit(
             content=_render_register(
                 error=f"Не удалось подключиться к 1С: {e}",
                 username=username,
-                server_ip=server_ip,
-                onec_publication=onec_publication,
+                onec_base_url=onec_base_url,
             ),
             status_code=502,
         )
 
-    create_user(username, password, server_ip, onec_publication)
+    create_user(username, password, onec_base_url)
 
     # Автоматически входим после регистрации
-    session_data = {"server_ip": server_ip, "onec_publication": onec_publication, "user": username, "password": password}
+    session_data = {"onec_base_url": onec_base_url, "user": username, "password": password}
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
         key="session",
