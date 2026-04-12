@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from config import PRICE_COLUMNS, SECRET_KEY
+from database import init_db, get_user, username_exists, create_user
 from services.onec_client import (
     fetch_nomenclature,
     fetch_prices,
@@ -40,8 +41,11 @@ from services.sales_builder import build_sales_report
 
 app = FastAPI()
 
+init_db()
+
 INDEX_TEMPLATE_PATH     = Path("templates/index.html")
 LOGIN_TEMPLATE_PATH     = Path("templates/login.html")
+REGISTER_TEMPLATE_PATH  = Path("templates/register.html")
 TEMPLATE_PATH           = Path("templates/price_list.html")
 DASHBOARD_TEMPLATE_PATH = Path("templates/managers_dashboard.html")
 SALES_TEMPLATE_PATH     = Path("templates/sales_report.html")
@@ -81,57 +85,81 @@ def require_session(request: Request):
     return session, None
 
 
-# ── Авторизация ──────────────────────────────────────────────────────────────
+# ── Вспомогательные функции шаблонов ─────────────────────────────────────────
 
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = ""):
-    if get_session(request):
-        return RedirectResponse(url="/", status_code=302)
-
+def _render_login(error: str = "", username: str = "") -> str:
     html = LOGIN_TEMPLATE_PATH.read_text(encoding="utf-8")
     error_block = (
         f'<div class="error-msg"><i class="bi bi-exclamation-circle"></i>{error}</div>'
         if error else ""
     )
     html = html.replace("/*@@ERROR_BLOCK@@*/", error_block)
-    html = html.replace("/*@@SERVER_IP@@*/",  "")
-    html = html.replace("/*@@USERNAME@@*/",   "")
+    html = html.replace("/*@@USERNAME@@*/",    username)
+    return html
 
-    return HTMLResponse(content=html)
+
+def _render_register(error: str = "", username: str = "", server_ip: str = "") -> str:
+    html = REGISTER_TEMPLATE_PATH.read_text(encoding="utf-8")
+    error_block = (
+        f'<div class="error-msg"><i class="bi bi-exclamation-circle"></i>{error}</div>'
+        if error else ""
+    )
+    html = html.replace("/*@@ERROR_BLOCK@@*/", error_block)
+    html = html.replace("/*@@USERNAME@@*/",    username)
+    html = html.replace("/*@@SERVER_IP@@*/",   server_ip)
+    return html
+
+
+# ── Авторизация ──────────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    if get_session(request):
+        return RedirectResponse(url="/", status_code=302)
+    return HTMLResponse(content=_render_login())
 
 
 @app.post("/login")
 async def login_submit(
-    request: Request,
-    server_ip: str = Form(...),
-    username:  str = Form(...),
-    password:  str = Form(default=""),
+    request:  Request,
+    username: str = Form(...),
+    password: str = Form(default=""),
 ):
-    # Убираем случайно введённый протокол или слэши
-    server_ip = server_ip.strip().removeprefix("http://").removeprefix("https://").rstrip("/")
-    username  = username.strip()
+    username = username.strip()
 
-    if not server_ip or not username:
-        return RedirectResponse(
-            url="/login?error=Заполните все обязательные поля",
-            status_code=302,
+    if not username:
+        return HTMLResponse(
+            content=_render_login(error="Введите логин"),
+            status_code=400,
+        )
+
+    # Ищем пользователя в БД
+    user = get_user(username)
+    if not user:
+        return HTMLResponse(
+            content=_render_login(error="Пользователь не найден", username=username),
+            status_code=401,
+        )
+
+    if user["password"] != password:
+        return HTMLResponse(
+            content=_render_login(error="Неверный пароль", username=username),
+            status_code=401,
         )
 
     # Проверяем подключение к 1С
+    server_ip = user["server_ip"]
     set_credentials(server_ip, username, password)
     try:
         fetch_employees()
     except Exception as e:
-        html = LOGIN_TEMPLATE_PATH.read_text(encoding="utf-8")
-        html = html.replace(
-            "/*@@ERROR_BLOCK@@*/",
-            f'<div class="error-msg"><i class="bi bi-exclamation-circle"></i>'
-            f'Не удалось подключиться к 1С: {e}</div>',
+        return HTMLResponse(
+            content=_render_login(
+                error=f"Не удалось подключиться к 1С: {e}",
+                username=username,
+            ),
+            status_code=502,
         )
-        html = html.replace("/*@@SERVER_IP@@*/", server_ip)
-        html = html.replace("/*@@USERNAME@@*/",  username)
-        html = html.replace("/*@@ONEC_PATH@@*/", ONEC_PATH)
-        return HTMLResponse(content=html, status_code=401)
 
     session_data = {"server_ip": server_ip, "user": username, "password": password}
     response = RedirectResponse(url="/", status_code=302)
@@ -141,6 +169,74 @@ async def login_submit(
         httponly=True,
         samesite="lax",
         max_age=60 * 60 * 12,  # 12 часов
+    )
+    return response
+
+
+# ── Регистрация ───────────────────────────────────────────────────────────────
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    if get_session(request):
+        return RedirectResponse(url="/", status_code=302)
+    return HTMLResponse(content=_render_register())
+
+
+@app.post("/register")
+async def register_submit(
+    request:   Request,
+    server_ip: str = Form(...),
+    username:  str = Form(...),
+    password:  str = Form(default=""),
+):
+    server_ip = server_ip.strip().removeprefix("http://").removeprefix("https://").rstrip("/")
+    username  = username.strip()
+
+    if not server_ip or not username:
+        return HTMLResponse(
+            content=_render_register(
+                error="Заполните все обязательные поля",
+                username=username,
+                server_ip=server_ip,
+            ),
+            status_code=400,
+        )
+
+    if username_exists(username):
+        return HTMLResponse(
+            content=_render_register(
+                error="Пользователь с таким логином уже существует",
+                username=username,
+                server_ip=server_ip,
+            ),
+            status_code=400,
+        )
+
+    # Проверяем подключение к 1С перед сохранением
+    set_credentials(server_ip, username, password)
+    try:
+        fetch_employees()
+    except Exception as e:
+        return HTMLResponse(
+            content=_render_register(
+                error=f"Не удалось подключиться к 1С: {e}",
+                username=username,
+                server_ip=server_ip,
+            ),
+            status_code=502,
+        )
+
+    create_user(username, password, server_ip)
+
+    # Автоматически входим после регистрации
+    session_data = {"server_ip": server_ip, "user": username, "password": password}
+    response = RedirectResponse(url="/", status_code=302)
+    response.set_cookie(
+        key="session",
+        value=encode_session(session_data),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 12,
     )
     return response
 
