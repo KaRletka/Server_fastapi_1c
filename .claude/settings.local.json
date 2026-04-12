@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile main.py)",
+      "Bash(grep -r \"^import\\\\|^from\" \"C:\\\\Virtual_D\\\\Projects\\\\Service_FastAPI_1c\"/*.py)",
+      "Bash(grep:*)"
+    ]
+  }
+}
