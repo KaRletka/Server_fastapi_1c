@@ -2,17 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python -m py_compile main.py)",
-      "Bash(grep -r \"^import\\\\|^from\" \"C:\\\\Virtual_D\\\\Projects\\\\Service_FastAPI_1c\"/*.py)",
-      "Bash(grep:*)",
-      "git status",
-      "git diff",
-      "git add",
-      "git commit",
-      "git push"
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)"
     ]
-  },
-
-  "tools": {
-    "terminal": true
   }
 }
