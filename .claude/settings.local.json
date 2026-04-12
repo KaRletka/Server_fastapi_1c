@@ -3,7 +3,16 @@
     "allow": [
       "Bash(python -m py_compile main.py)",
       "Bash(grep -r \"^import\\\\|^from\" \"C:\\\\Virtual_D\\\\Projects\\\\Service_FastAPI_1c\"/*.py)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "git status",
+      "git diff",
+      "git add",
+      "git commit",
+      "git push"
     ]
+  },
+
+  "tools": {
+    "terminal": true
   }
 }
