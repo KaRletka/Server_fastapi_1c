@@ -48,16 +48,18 @@ Service_FastAPI_1c/
 
 ### 2.1 Протокол и формат
 
-Сервис обращается к **1С OData API** по HTTP. Стандартный путь к API настроен в `config.py`:
+Сервис обращается к **1С OData API** по HTTP. Путь к API строится **динамически** из профиля пользователя:
 
 ```
-/unf_dashboard/odata/standard.odata
+http://{server_ip}/{onec_publication}/odata/standard.odata
 ```
+
+Где `onec_publication` — имя публикации базы 1С на веб-сервере (задаётся пользователем при регистрации, например `unf_dashboard`).
 
 Полный адрес запроса:
 
 ```
-http://{server_ip}/unf_dashboard/odata/standard.odata/{ИмяСущности}?$format=json&...
+http://{server_ip}/{onec_publication}/odata/standard.odata/{ИмяСущности}?$format=json&...
 ```
 
 Все запросы — только **GET**. Никакие данные в 1С не записываются.
@@ -84,6 +86,12 @@ def safe_get(url: str) -> dict | None:
     req.add_header("Accept", "application/json")
     # таймаут 30 секунд
     # возвращает None при ошибке соединения или HTTP-ошибке
+
+# Сигнатура set_credentials
+def set_credentials(server_ip: str, user: str, password: str, onec_publication: str) -> None:
+    _ctx_base_url.set(f"http://{server_ip}/{onec_publication}/odata/standard.odata")
+    _ctx_user.set(user)
+    _ctx_password.set(password)
 ```
 
 Кириллица в URL экранируется через `urllib.parse.quote(...)`.
@@ -126,28 +134,31 @@ def safe_get(url: str) -> dict | None:
 
 Система использует два уровня:
 
-1. **SQLite (`users.db`)** — постоянное хранилище профилей. При регистрации сюда сохраняются `username`, `password`, `server_ip`. При входе отсюда берётся `server_ip` по логину.
-2. **Подписанные cookie-сессии** — после успешного входа выдаётся cookie, содержащая `server_ip`, `user`, `password`. При каждом запросе к защищённым страницам данные читаются из cookie — SQLite больше не опрашивается.
+1. **SQLite (`users.db`)** — постоянное хранилище профилей. При регистрации сюда сохраняются `username`, `password`, `server_ip`, `onec_publication`. При входе отсюда берутся `server_ip` и `onec_publication` по логину.
+2. **Подписанные cookie-сессии** — после успешного входа выдаётся cookie, содержащая `server_ip`, `onec_publication`, `user`, `password`. При каждом запросе к защищённым страницам данные читаются из cookie — SQLite больше не опрашивается.
 
 ### 3.2 Схема базы данных (`database.py`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    username  TEXT UNIQUE NOT NULL,
-    password  TEXT NOT NULL,
-    server_ip TEXT NOT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    username         TEXT    UNIQUE NOT NULL,
+    password         TEXT    NOT NULL,
+    server_ip        TEXT    NOT NULL,
+    onec_publication TEXT    NOT NULL DEFAULT 'unf_dashboard'
 )
 ```
+
+> При запуске `init_db()` автоматически выполняет миграцию для существующих баз — добавляет колонку `onec_publication` через `ALTER TABLE`, если её ещё нет.
 
 Функции модуля `database.py`:
 
 | Функция | Назначение |
 |---|---|
-| `init_db()` | Создаёт таблицу при первом запуске (идемпотентна) |
-| `get_user(username)` | Возвращает `dict` с профилем или `None` |
+| `init_db()` | Создаёт таблицу при первом запуске (идемпотентна); мигрирует существующую БД |
+| `get_user(username)` | Возвращает `dict` с профилем (включая `onec_publication`) или `None` |
 | `username_exists(username)` | Проверяет уникальность логина |
-| `create_user(username, password, server_ip)` | Сохраняет нового пользователя |
+| `create_user(username, password, server_ip, onec_publication)` | Сохраняет нового пользователя |
 
 `init_db()` вызывается один раз при старте приложения.
 
@@ -156,16 +167,18 @@ CREATE TABLE IF NOT EXISTS users (
 ```json
 {
   "server_ip": "192.168.1.10",
+  "onec_publication": "unf_dashboard",
   "user": "admin",
   "password": "secret"
 }
 ```
 
-| Поле        | Тип    | Назначение                                       |
-|-------------|--------|--------------------------------------------------|
-| `server_ip` | string | IP или hostname сервера 1С                       |
-| `user`      | string | Имя пользователя в 1С                            |
-| `password`  | string | Пароль в 1С (хранится открытым текстом в cookie) |
+| Поле               | Тип    | Назначение                                       |
+|--------------------|--------|--------------------------------------------------|
+| `server_ip`        | string | IP или hostname сервера 1С                       |
+| `onec_publication` | string | Имя публикации базы 1С на веб-сервере            |
+| `user`             | string | Имя пользователя в 1С                            |
+| `password`         | string | Пароль в 1С (хранится открытым текстом в cookie) |
 
 ### 3.4 Формат cookie
 
@@ -199,13 +212,13 @@ session = json.loads(base64.urlsafe_b64decode(payload).decode())
 
 ```
 POST /register
-  form: server_ip, username, password
+  form: server_ip, onec_publication, username, password
         ↓
   Проверка уникальности username в SQLite
         ↓
   Тестовый вызов fetch_employees() к 1С
         ↓
-  Сохранение в users.db
+  Сохранение в users.db (включая onec_publication)
         ↓
   Создание cookie-сессии → Redirect /
 ```
@@ -222,7 +235,7 @@ POST /login
   Сравнение password с users.password
   Если не совпадает → ошибка "Неверный пароль"
         ↓
-  server_ip берётся из users.server_ip
+  server_ip и onec_publication берутся из users.*
         ↓
   Тестовый вызов fetch_employees() к 1С
         ↓
@@ -263,6 +276,8 @@ _ctx_password: ContextVar[str] = ContextVar("onec_password", default="")
 
 Значения устанавливаются в начале каждого запроса и не пересекаются между запросами.
 
+`_ctx_base_url` формируется в `set_credentials` как `http://{server_ip}/{onec_publication}/odata/standard.odata` — путь к API больше не является глобальной константой в `config.py`.
+
 ---
 
 ## 4. Хранение данных
@@ -275,6 +290,7 @@ _ctx_password: ContextVar[str] = ContextVar("onec_password", default="")
 | Активная сессия               | Cookie браузера           | Браузер-сессия    | 12 часов                |
 | Учётные данные (runtime)      | Python ContextVar         | Один HTTP-запрос  | Время запроса           |
 | Данные из 1С                  | Нигде (только RAM)        | Один HTTP-запрос  | Время запроса           |
+| Имя публикации OData          | SQLite `users.db` + cookie | Пользователь     | До смены профиля        |
 | Ключ подписи сессий           | `config.py` (код)         | Приложение        | Пока работает процесс   |
 | Конфигурация                  | `config.py` (код)         | Приложение        | Статично                |
 
@@ -283,9 +299,6 @@ _ctx_password: ContextVar[str] = ContextVar("onec_password", default="")
 ```python
 # Ключ подписи HMAC-сессий
 SECRET_KEY = "change-me-in-production-use-random-string"
-
-# Путь к OData API в 1С
-ONEC_PATH = "/unf_dashboard/odata/standard.odata"
 
 # UUID типов цен в справочнике «Виды цен»
 PRICE_TYPE_RETAIL    = "7481362d-b5b8-11e4-8355-74d02b7dfd8c"
@@ -331,7 +344,7 @@ username=admin&password=secret
 **POST /register** — принимает форму:
 ```
 Content-Type: application/x-www-form-urlencoded
-server_ip=192.168.1.10&username=admin&password=secret
+server_ip=192.168.1.10&onec_publication=unf_dashboard&username=admin&password=secret
 ```
 
 ### Защищённые эндпоинты (требуют cookie-сессию)
@@ -373,9 +386,10 @@ server_ip=192.168.1.10&username=admin&password=secret
 
 ```python
 {
-    "server_ip": str,   # IP-адрес сервера 1С
-    "user":      str,   # Имя пользователя
-    "password":  str    # Пароль
+    "server_ip":        str,   # IP-адрес сервера 1С
+    "onec_publication": str,   # Имя публикации базы 1С на веб-сервере
+    "user":             str,   # Имя пользователя
+    "password":         str    # Пароль
 }
 ```
 
@@ -518,13 +532,13 @@ server_ip=192.168.1.10&username=admin&password=secret
 ### Регистрация
 
 ```
-Браузер: POST /register (server_ip, username, password)
+Браузер: POST /register (server_ip, onec_publication, username, password)
     ↓
 database.py: username_exists() → SQLite
     ↓
 onec_client: fetch_employees() → тест подключения к 1С
     ↓
-database.py: create_user() → SQLite INSERT
+database.py: create_user() → SQLite INSERT (включая onec_publication)
     ↓
 Выдача cookie-сессии → Redirect /
 ```
@@ -534,13 +548,13 @@ database.py: create_user() → SQLite INSERT
 ```
 Браузер: POST /login (username, password)
     ↓
-database.py: get_user() → SQLite SELECT → получаем server_ip
+database.py: get_user() → SQLite SELECT → получаем server_ip и onec_publication
     ↓
 Сравнение пароля
     ↓
 onec_client: fetch_employees() → тест подключения к 1С
     ↓
-Выдача cookie-сессии → Redirect /
+Выдача cookie-сессии (включая onec_publication) → Redirect /
 ```
 
 ### Защищённый запрос
@@ -604,7 +618,8 @@ from services.onec_client import set_credentials, fetch_nomenclature
 set_credentials(
     server_ip="192.168.1.10",
     user="admin",
-    password="secret"
+    password="secret",
+    onec_publication="unf_dashboard"
 )
 
 # Получаем список товаров
