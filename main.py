@@ -7,9 +7,11 @@ import json
 import traceback
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from config import PRICE_COLUMNS, SECRET_KEY
 from database import init_db, get_user, username_exists, create_user
@@ -38,11 +40,13 @@ from services.data_builder import (
 )
 from services.dashboard_builder import build_managers_dashboard
 from services.sales_builder import build_sales_report
+from services.ai_client import chat as ai_chat
 
 app = FastAPI()
 
 init_db()
 
+CHAT_TEMPLATE_PATH      = Path("templates/chat.html")
 INDEX_TEMPLATE_PATH     = Path("templates/index.html")
 LOGIN_TEMPLATE_PATH     = Path("templates/login.html")
 REGISTER_TEMPLATE_PATH  = Path("templates/register.html")
@@ -404,6 +408,35 @@ def get_sales_report(
     html = html.replace("/*@@END_DATE@@*/",           end_date)
 
     return HTMLResponse(content=html)
+
+
+# ── ИИ-ассистент ─────────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    prompt: str
+
+
+@app.get("/chat", response_class=HTMLResponse)
+def get_chat(request: Request):
+    _, redirect = require_session(request)
+    if redirect:
+        return redirect
+    return HTMLResponse(content=CHAT_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+
+@app.post("/api/chat")
+async def post_chat(request: Request, body: ChatMessage):
+    session, _ = require_session(request)
+    if not session:
+        return JSONResponse({"error": "Не авторизован"}, status_code=401)
+
+    onec_ip = urlparse(session["onec_base_url"]).netloc
+    try:
+        answer = ai_chat(body.prompt, session["user"], session["password"], onec_ip)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+    return JSONResponse({"answer": answer})
 
 
 if __name__ == "__main__":
