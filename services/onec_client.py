@@ -3,7 +3,6 @@ import urllib.parse
 import base64
 import json
 from contextvars import ContextVar
-from config import ONEC_PATH
 
 # Контекстные переменные — устанавливаются из сессии для каждого запроса
 _ctx_base_url: ContextVar[str] = ContextVar("onec_base_url", default="")
@@ -11,9 +10,9 @@ _ctx_user:     ContextVar[str] = ContextVar("onec_user",     default="")
 _ctx_password: ContextVar[str] = ContextVar("onec_password", default="")
 
 
-def set_credentials(server_ip: str, user: str, password: str) -> None:
+def set_credentials(server_ip: str, user: str, password: str, onec_publication: str) -> None:
     """Устанавливает учётные данные для текущего запроса."""
-    _ctx_base_url.set(f"http://{server_ip}{ONEC_PATH}")
+    _ctx_base_url.set(f"http://{server_ip}/{onec_publication}/odata/standard.odata")
     _ctx_user.set(user)
     _ctx_password.set(password)
 
