@@ -430,7 +430,8 @@ async def post_chat(request: Request, body: ChatMessage):
     if not session:
         return JSONResponse({"error": "Не авторизован"}, status_code=401)
 
-    onec_ip = urlparse(session["onec_base_url"]).netloc
+    _parsed = urlparse(session["onec_base_url"])
+    onec_ip = _parsed.netloc + _parsed.path.rstrip("/")
     try:
         answer = ai_chat(body.prompt, session["user"], session["password"], onec_ip)
     except Exception as e:
